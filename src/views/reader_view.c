@@ -138,36 +138,33 @@ static uint8_t image_top_reserve(const ReaderModel* m) {
     return (uint8_t)h;
 }
 
-/* Compute page end offset by word-wrapping in the cache. */
-static void compute_page_end(ReaderModel* m) {
-    m->cache_len = fbook_read(m->book, m->page_offset, m->cache, sizeof(m->cache) - 1);
-    m->cache[m->cache_len] = '\0';
+static uint32_t compute_page_end_for(
+    FBook* book,
+    const BookSettings* settings,
+    uint32_t page_offset,
+    char* cache,
+    uint16_t cache_size,
+    uint16_t* out_cache_len) {
+    if(!book || !settings || !cache || cache_size == 0) return page_offset;
 
-    /* Plate page: a v2 image that fills the screen takes the page on its
-     * own; advance past the single byte the converter inserts at the image
-     * marker so the next page resumes with text. */
-    if(is_plate_page(m)) {
-        m->page_end_offset = m->page_offset + 1;
-        if(m->page_end_offset > m->book->text_length) {
-            m->page_end_offset = m->book->text_length;
-        }
-        return;
-    }
+    uint16_t cache_len = (uint16_t)fbook_read(book, page_offset, cache, cache_size - 1);
+    cache[cache_len] = '\0';
+    if(out_cache_len) *out_cache_len = cache_len;
 
-    uint8_t lh = line_height_for_size(m->settings->text_size);
+    uint8_t lh = line_height_for_size(settings->text_size);
     uint8_t avail_h = READER_H;
-    if(m->settings->show_progress_bar && avail_h > 3) avail_h -= 3;
+    if(settings->show_progress_bar && avail_h > 3) avail_h -= 3;
 
     /* Reserve room for an inline image on this page, using cache_len as the
      * upper bound for what this page can cover. We also subtract 2px of gap
      * between the image and the first line of text so descenders don't touch. */
     uint8_t reserve = 0;
-    if(m->settings->show_images && m->settings->power_mode != PowerModePowerSaver) {
-        uint16_t img_idx = fbook_next_image(m->book, m->page_offset);
+    if(settings->show_images && settings->power_mode != PowerModePowerSaver) {
+        uint16_t img_idx = fbook_next_image(book, page_offset);
         if(img_idx != UINT16_MAX &&
-           m->book->images[img_idx].offset_in_text < m->page_offset + m->cache_len) {
-            uint16_t h = m->book->images[img_idx].h;
-            uint8_t cap = inline_image_max_h(m->book);
+           book->images[img_idx].offset_in_text < page_offset + cache_len) {
+            uint16_t h = book->images[img_idx].h;
+            uint8_t cap = inline_image_max_h(book);
             if(h > cap) h = cap;
             reserve = (uint8_t)h;
             if(reserve + 2 < avail_h) reserve += 2;
@@ -175,40 +172,65 @@ static void compute_page_end(ReaderModel* m) {
     }
     /* Page-number overlay sits in the top-right; reserve the first 8px so
      * it doesn't overlap the first line of text. */
-    if(m->settings->show_page_number && reserve < 8) reserve = 8;
+    if(settings->show_page_number && reserve < 8) reserve = 8;
     uint8_t text_h = avail_h > reserve ? avail_h - reserve : lh;
     uint8_t max_lines = (uint8_t)(text_h / lh);
     if(max_lines < 1) max_lines = 1;
 
-    uint8_t mcpl = max_chars_per_line(m->settings->text_size);
+    uint8_t mcpl = max_chars_per_line(settings->text_size);
 
     uint16_t i = 0;
     uint16_t lines = 0;
     uint16_t last_break = 0;
 
-    while(i < m->cache_len && lines < max_lines) {
+    while(i < cache_len && lines < max_lines) {
         // newline handling (hard break)
         uint16_t line_start = i;
         uint16_t col = 0;
-        while(i < m->cache_len && m->cache[i] != '\n' && col < mcpl) {
+        while(i < cache_len && cache[i] != '\n' && col < mcpl) {
             i++;
             col++;
         }
-        if(i < m->cache_len && m->cache[i] == '\n') {
+        if(i < cache_len && cache[i] == '\n') {
             i++;
-        } else if(col == mcpl && i < m->cache_len) {
+        } else if(col == mcpl && i < cache_len) {
             // back up to previous space for word wrap
             uint16_t j = i;
-            while(j > line_start && m->cache[j] != ' ') j--;
+            while(j > line_start && cache[j] != ' ') j--;
             if(j > line_start) i = j + 1;
         }
         last_break = i;
         lines++;
     }
 
-    if(last_break == 0) last_break = m->cache_len; // fallback, prevents infinite loop
-    m->page_end_offset = m->page_offset + last_break;
-    if(m->page_end_offset > m->book->text_length) m->page_end_offset = m->book->text_length;
+    if(last_break == 0) last_break = cache_len; // fallback, prevents infinite loop
+    uint32_t page_end_offset = page_offset + last_break;
+    if(page_end_offset > book->text_length) page_end_offset = book->text_length;
+    return page_end_offset;
+}
+
+/* Compute page end offset by word-wrapping in the cache. */
+static void compute_page_end(ReaderModel* m) {
+    /* Plate page: a v2 image that fills the screen takes the page on its
+     * own; advance past the single byte the converter inserts at the image
+     * marker so the next page resumes with text. */
+    if(is_plate_page(m)) {
+        m->cache_len = fbook_read(m->book, m->page_offset, m->cache, sizeof(m->cache) - 1);
+        m->cache[m->cache_len] = '\0';
+        m->page_end_offset = m->page_offset + 1;
+        if(m->page_end_offset > m->book->text_length) {
+            m->page_end_offset = m->book->text_length;
+        }
+        return;
+    }
+
+    m->page_end_offset = compute_page_end_for(
+        m->book,
+        m->settings,
+        m->page_offset,
+        m->cache,
+        sizeof(m->cache),
+        &m->cache_len);
 }
 
 /* Capture the current page's text into the snapshot used by the transition
@@ -802,6 +824,54 @@ void reader_view_jump_to(ReaderView* r, uint32_t offset) {
             if(m->book && m->settings) compute_page_end(m);
         },
         true);
+}
+
+void reader_view_build_page_map(
+    FBook* book,
+    const BookSettings* settings,
+    const uint32_t* offsets,
+    uint16_t count,
+    uint32_t* pages) {
+    if(!pages) return;
+    for(uint16_t i = 0; i < count; ++i) pages[i] = 0;
+    if(!book || !settings || !offsets || count == 0) return;
+
+    char cache[512];
+    uint32_t page_offset = 0;
+    uint32_t page = 0;
+    uint16_t next_target = 0;
+
+    while(next_target < count) {
+        uint32_t target = offsets[next_target];
+        if(target > book->text_length) target = book->text_length;
+
+        if(target <= page_offset) {
+            pages[next_target++] = page;
+            continue;
+        }
+
+        uint32_t next_offset = compute_page_end_for(
+            book, settings, page_offset, cache, sizeof(cache), NULL);
+        if(next_offset <= page_offset) {
+            next_offset = page_offset + 1;
+            if(next_offset > book->text_length) next_offset = book->text_length;
+        }
+
+        if(target < next_offset) {
+            pages[next_target++] = page;
+            continue;
+        }
+
+        page_offset = next_offset;
+        page++;
+
+        if(page_offset >= book->text_length) {
+            while(next_target < count) {
+                pages[next_target++] = page;
+            }
+            break;
+        }
+    }
 }
 
 void reader_view_set_event_callback(ReaderView* r, ReaderEventCallback cb, void* ctx) {

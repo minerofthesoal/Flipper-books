@@ -18,7 +18,7 @@ import sys
 import zipfile
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from xml.etree import ElementTree as ET
 
 try:
@@ -40,6 +40,8 @@ IMAGE_MAX_WIDTH = 128
 IMAGE_MAX_HEIGHT = 64           # v2 raised from 48
 COVER_MAX_WIDTH = 64            # cover thumbnail size for the library view
 COVER_MAX_HEIGHT = 64
+FBOOK2_FLAG_HAS_COVER = 0x0001
+FBOOK2_FLAG_CHAPTER_PAGES = 0x0004
 # Must match FBOOK_MAX_CHAPTERS / FBOOK_MAX_IMAGES in src/helpers/book_storage.h.
 # If a book exceeds these, the on-device reader silently drops the excess, so we
 # truncate here too - otherwise the file pointer desyncs and the reader can
@@ -58,6 +60,33 @@ NS = {
     "ncx": "http://www.daisy.org/z3986/2005/ncx/",
 }
 
+DISPLAY_TRANSLATION = {
+    ord("\u2018"): "'",
+    ord("\u2019"): "'",
+    ord("\u201a"): "'",
+    ord("\u201b"): "'",
+    ord("\u2032"): "'",
+    ord("\u201c"): '"',
+    ord("\u201d"): '"',
+    ord("\u201e"): '"',
+    ord("\u201f"): '"',
+    ord("\u2033"): '"',
+    ord("\u2010"): "-",
+    ord("\u2011"): "-",
+    ord("\u2012"): "-",
+    ord("\u2013"): "-",
+    ord("\u2014"): "-",
+    ord("\u2015"): "-",
+    ord("\u2212"): "-",
+    ord("\u2026"): "...",
+    ord("\u00a0"): " ",
+}
+
+
+def _display_text(s: str) -> str:
+    """Normalize punctuation to glyphs the Flipper built-in fonts render well."""
+    return s.translate(DISPLAY_TRANSLATION)
+
 
 @dataclass
 class ChapterOut:
@@ -70,6 +99,7 @@ class ChapterOutV2:
     offset: int
     word_count: int
     title: str
+    page: int = 0
 
 
 @dataclass
@@ -158,7 +188,7 @@ class _TextExtractor(HTMLParser):
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r" *\n *", "\n", text)
         text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
+        return _display_text(text.strip())
 
 
 def _prepare_for_1bit(im, target_w, target_h):
@@ -240,8 +270,8 @@ def _load_spine(zf: zipfile.ZipFile, opf_path: str):
     with zf.open(opf_path) as f:
         root = ET.parse(f).getroot()
 
-    title = (root.findtext(".//dc:title", default="", namespaces=NS) or "").strip()
-    author = (root.findtext(".//dc:creator", default="", namespaces=NS) or "").strip()
+    title = _display_text((root.findtext(".//dc:title", default="", namespaces=NS) or "").strip())
+    author = _display_text((root.findtext(".//dc:creator", default="", namespaces=NS) or "").strip())
     language = (root.findtext(".//dc:language", default="", namespaces=NS) or "").strip()
 
     manifest = {}
@@ -252,6 +282,7 @@ def _load_spine(zf: zipfile.ZipFile, opf_path: str):
             item.attrib.get("properties", ""),
         )
 
+    spine = root.find(".//opf:spine", NS)
     spine_ids = [
         itemref.attrib["idref"]
         for itemref in root.findall(".//opf:spine/opf:itemref", NS)
@@ -288,6 +319,53 @@ def _load_spine(zf: zipfile.ZipFile, opf_path: str):
     def resolve(href: str) -> str:
         return os.path.normpath(os.path.join(base, href)).replace("\\", "/")
 
+    def resolve_doc_ref(href: str) -> str:
+        return resolve(href.split("#", 1)[0])
+
+    def read_toc_titles() -> Dict[str, str]:
+        toc_href = None
+        if spine is not None:
+            toc_id = spine.attrib.get("toc")
+            if toc_id and toc_id in manifest:
+                toc_href = manifest[toc_id][0]
+        if toc_href is None:
+            for href, media, props in manifest.values():
+                if media == "application/x-dtbncx+xml" or "nav" in (props or "").split():
+                    toc_href = href
+                    break
+        if toc_href is None:
+            return {}
+
+        toc_path = resolve(toc_href)
+        try:
+            toc_root = ET.fromstring(zf.read(toc_path))
+        except Exception:
+            return {}
+
+        titles: Dict[str, str] = {}
+        for nav_point in toc_root.findall(".//ncx:navPoint", NS):
+            label = nav_point.findtext(".//ncx:navLabel/ncx:text", default="", namespaces=NS)
+            content = nav_point.find(".//ncx:content", NS)
+            if not label or content is None:
+                continue
+            src = content.attrib.get("src", "")
+            if not src:
+                continue
+            doc = resolve_doc_ref(src)
+            titles.setdefault(doc, _display_text(re.sub(r"\s+", " ", label).strip()))
+        if titles:
+            return titles
+
+        # EPUB3 navigation documents are XHTML. Their TOC is usually an
+        # <nav epub:type="toc"> with nested <a href="...">Title</a> entries.
+        for elem in toc_root.findall(".//xhtml:a", NS):
+            href = elem.attrib.get("href", "")
+            label = "".join(elem.itertext())
+            if href and label:
+                doc = resolve_doc_ref(href)
+                titles.setdefault(doc, _display_text(re.sub(r"\s+", " ", label).strip()))
+        return titles
+
     documents = []
     for idref in spine_ids:
         entry = manifest.get(idref)
@@ -299,7 +377,7 @@ def _load_spine(zf: zipfile.ZipFile, opf_path: str):
         documents.append(resolve(href))
 
     cover_path = resolve(cover_ref) if cover_ref else None
-    return title, author, language, manifest, base, documents, cover_path
+    return title, author, language, manifest, base, documents, cover_path, read_toc_titles()
 
 
 def _extract_title_from_doc(raw_html: str) -> Optional[str]:
@@ -308,13 +386,98 @@ def _extract_title_from_doc(raw_html: str) -> Optional[str]:
         text = re.sub(r"<[^>]+>", "", m.group(1)).strip()
         text = re.sub(r"\s+", " ", text)
         if text:
-            return text[:CHAPTER_TITLE_V2 - 1]
+            return _display_text(text)[:CHAPTER_TITLE_V2 - 1]
     return None
 
 
 def _word_count(s: str) -> int:
     """Cheap word counter used for progress estimates and chapter metadata."""
     return len(re.findall(r"\b\w+\b", s, flags=re.UNICODE))
+
+
+def _compute_default_reader_page_end(
+    text_buf: bytearray,
+    page_offset: int,
+    images: List[ImageOut],
+) -> int:
+    """Mirror the reader's default Small-text pagination for stored TOC pages."""
+    cache_len = min(511, max(0, len(text_buf) - page_offset))
+    cache = text_buf[page_offset:page_offset + cache_len]
+
+    line_height = 9
+    max_chars_per_line = 26
+    avail_h = 64 - 3  # default settings show the progress bar
+
+    reserve = 8  # default settings show the page number overlay
+    for img in images:
+        if img.offset_in_text < page_offset:
+            continue
+        if img.offset_in_text < page_offset + cache_len:
+            h = min(img.height, 48)
+            reserve = max(reserve, h + 2 if h + 2 < avail_h else h)
+        break
+
+    text_h = avail_h - reserve if avail_h > reserve else line_height
+    max_lines = max(1, text_h // line_height)
+
+    i = 0
+    lines = 0
+    last_break = 0
+    while i < cache_len and lines < max_lines:
+        line_start = i
+        col = 0
+        while i < cache_len and cache[i] != 0x0A and col < max_chars_per_line:
+            i += 1
+            col += 1
+        if i < cache_len and cache[i] == 0x0A:
+            i += 1
+        elif col == max_chars_per_line and i < cache_len:
+            j = i
+            while j > line_start and cache[j] != 0x20:
+                j -= 1
+            if j > line_start:
+                i = j + 1
+        last_break = i
+        lines += 1
+
+    if last_break == 0:
+        last_break = cache_len
+    return min(len(text_buf), page_offset + last_break)
+
+
+def _assign_default_chapter_pages(
+    chapters: List[ChapterOutV2],
+    images: List[ImageOut],
+    text_buf: bytearray,
+) -> None:
+    """Precompute TOC page numbers so the device does not scan the book on open."""
+    page_offset = 0
+    page = 0
+    next_chapter = 0
+
+    while next_chapter < len(chapters):
+        target = min(chapters[next_chapter].offset, len(text_buf))
+        if target <= page_offset:
+            chapters[next_chapter].page = page
+            next_chapter += 1
+            continue
+
+        next_offset = _compute_default_reader_page_end(text_buf, page_offset, images)
+        if next_offset <= page_offset:
+            next_offset = min(len(text_buf), page_offset + 1)
+
+        if target < next_offset:
+            chapters[next_chapter].page = page
+            next_chapter += 1
+            continue
+
+        page_offset = next_offset
+        page += 1
+        if page_offset >= len(text_buf):
+            while next_chapter < len(chapters):
+                chapters[next_chapter].page = page
+                next_chapter += 1
+            break
 
 
 def _render_cover_1bpp(im, max_w=COVER_MAX_WIDTH, max_h=COVER_MAX_HEIGHT) -> Tuple[int, int, bytes]:
@@ -334,7 +497,8 @@ def _render_cover_1bpp(im, max_w=COVER_MAX_WIDTH, max_h=COVER_MAX_HEIGHT) -> Tup
 def _build_book_data(zf, opf_path, include_images):
     """Walk the spine, extract text, collect images. Returns the per-book
     in-memory representation used by both the v1 and v2 writers."""
-    title, author, language, manifest, base_dir, documents, cover_path = _load_spine(zf, opf_path)
+    title, author, language, manifest, base_dir, documents, cover_path, toc_titles = _load_spine(
+        zf, opf_path)
 
     text_buf = bytearray()
     chapters: List[ChapterOutV2] = []
@@ -348,7 +512,8 @@ def _build_book_data(zf, opf_path, include_images):
             raw = zf.read(doc_path).decode("utf-8", errors="replace")
         except KeyError:
             continue
-        chap_title = _extract_title_from_doc(raw) or os.path.basename(doc_path)
+        chap_title = toc_titles.get(doc_path) or _extract_title_from_doc(raw) or os.path.basename(doc_path)
+        include_chapter = bool(chap_title) and (not toc_titles or doc_path in toc_titles)
 
         def image_hook(src: str, _doc_path=doc_path) -> Optional[str]:
             if not include_images or Image is None:
@@ -382,7 +547,7 @@ def _build_book_data(zf, opf_path, include_images):
 
         chapter_start = len(text_buf)
         chap_words = _word_count(text)
-        if len(chapters) < MAX_CHAPTERS:
+        if include_chapter and len(chapters) < MAX_CHAPTERS:
             chapters.append(ChapterOutV2(offset=chapter_start,
                                          word_count=chap_words,
                                          title=chap_title))
@@ -395,6 +560,8 @@ def _build_book_data(zf, opf_path, include_images):
             pos = m.end()
         text_buf.extend(text[pos:].encode("utf-8", errors="replace"))
         text_buf.extend(b"\n\n")
+
+    _assign_default_chapter_pages(chapters, images, text_buf)
 
     cover_w = cover_h = 0
     cover_data = b""
@@ -472,7 +639,8 @@ def _write_v2(book, out_path):
 
     chapter_table_size = len(chapters) * V2_CHAPTER_SIZE
     image_table_size = len(images) * V2_IMAGE_SIZE
-    text_offset = V2_HEADER_SIZE + chapter_table_size + image_table_size
+    chapter_page_table_size = len(chapters) * 4
+    text_offset = V2_HEADER_SIZE + chapter_table_size + image_table_size + chapter_page_table_size
     text_len = len(text_buf)
 
     cursor = text_offset + text_len
@@ -487,7 +655,9 @@ def _write_v2(book, out_path):
     word_count = sum(c.word_count for c in chapters)
     flags = 0
     if cover_data:
-        flags |= 0x0001  # has-cover
+        flags |= FBOOK2_FLAG_HAS_COVER
+    if chapters:
+        flags |= FBOOK2_FLAG_CHAPTER_PAGES
 
     with open(out_path, "wb") as f:
         f.write(FBOOK_V2_MAGIC)
@@ -526,6 +696,8 @@ def _write_v2(book, out_path):
             f.write(struct.pack("<I", len(img.data)))
             f.write(struct.pack("<B", img.fmt))
             f.write(b"\x00" * 3)
+        for ch in chapters:
+            f.write(struct.pack("<I", ch.page))
         f.write(bytes(text_buf))
         if cover_data:
             f.write(cover_data)

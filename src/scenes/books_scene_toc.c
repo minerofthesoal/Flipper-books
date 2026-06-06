@@ -2,45 +2,61 @@
 #include <stdio.h>
 
 static FBook* cached_book;
-/* Submenu only stores a pointer to the label string, so we keep our own
- * static buffers alive for the whole scene. */
-static char toc_labels[FBOOK_MAX_CHAPTERS][80];
+static uint32_t cached_pages[FBOOK_MAX_CHAPTERS];
 
-static void submenu_cb(void* ctx, uint32_t index) {
+static void toc_select_cb(uint16_t index, void* ctx) {
     BooksApp* app = ctx;
     if(!cached_book || index >= cached_book->chapter_count) return;
     app->progress.offset = cached_book->chapters[index].offset;
-    app->progress.page = 0;
+    app->progress.page = cached_pages[index];
     book_progress_save(app->current_book_path, &app->progress);
     view_dispatcher_send_custom_event(app->view_dispatcher, BooksEventJumpTo);
 }
 
 void books_scene_toc_on_enter(void* ctx) {
     BooksApp* app = ctx;
-    Submenu* m = app->submenu;
-    submenu_reset(m);
-    submenu_set_header(m, "Contents");
+    TocView* toc = app->toc;
+    toc_view_reset(toc, "Contents", "(no chapters)");
+    toc_view_set_select_callback(toc, toc_select_cb, app);
+
     cached_book = fbook_alloc();
     if(!fbook_open(cached_book, app->current_book_path)) {
-        submenu_add_item(m, "(no TOC)", 0xFFFF, NULL, app);
+        toc_view_reset(toc, "Contents", "(no TOC)");
         fbook_free(cached_book);
         cached_book = NULL;
     } else if(cached_book->chapter_count == 0) {
-        submenu_add_item(m, "(no chapters)", 0xFFFF, NULL, app);
+        toc_view_reset(toc, "Contents", "(no chapters)");
     } else {
+        if(cached_book->flags & FBOOK2_FLAG_CHAPTER_PAGES) {
+            for(uint16_t i = 0; i < cached_book->chapter_count; ++i) {
+                cached_pages[i] = cached_book->chapters[i].page;
+            }
+        } else {
+            uint32_t offsets[FBOOK_MAX_CHAPTERS];
+            for(uint16_t i = 0; i < cached_book->chapter_count; ++i) {
+                offsets[i] = cached_book->chapters[i].offset;
+            }
+            reader_view_build_page_map(
+                cached_book,
+                &app->settings,
+                offsets,
+                cached_book->chapter_count,
+                cached_pages);
+        }
+
         for(uint16_t i = 0; i < cached_book->chapter_count; ++i) {
             const char* title = cached_book->chapters[i].title;
-            uint32_t wc = cached_book->chapters[i].word_count;
-            if(wc > 0) {
-                snprintf(toc_labels[i], sizeof(toc_labels[i]),
-                         "%s (%lu w)", title, (unsigned long)wc);
-            } else {
-                snprintf(toc_labels[i], sizeof(toc_labels[i]), "%s", title);
-            }
-            submenu_add_item(m, toc_labels[i], i, submenu_cb, app);
+            char label[96];
+            snprintf(
+                label,
+                sizeof(label),
+                "%s  p%lu",
+                title[0] ? title : "(untitled)",
+                (unsigned long)(cached_pages[i] + 1));
+            toc_view_add_entry(toc, label);
         }
     }
-    view_dispatcher_switch_to_view(app->view_dispatcher, BooksViewSubmenu);
+    view_dispatcher_switch_to_view(app->view_dispatcher, BooksViewToc);
 }
 
 bool books_scene_toc_on_event(void* ctx, SceneManagerEvent event) {
@@ -53,8 +69,7 @@ bool books_scene_toc_on_event(void* ctx, SceneManagerEvent event) {
 }
 
 void books_scene_toc_on_exit(void* ctx) {
-    BooksApp* app = ctx;
-    submenu_reset(app->submenu);
+    UNUSED(ctx);
     if(cached_book) {
         fbook_free(cached_book);
         cached_book = NULL;

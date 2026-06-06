@@ -46,6 +46,7 @@ BooksApp* books_app_alloc(void) {
     app->popup = popup_alloc();
     app->reader = reader_view_alloc();
     app->library = library_view_alloc();
+    app->toc = toc_view_alloc();
 
     view_dispatcher_add_view(app->view_dispatcher, BooksViewSubmenu, submenu_get_view(app->submenu));
     view_dispatcher_add_view(app->view_dispatcher, BooksViewVarList, variable_item_list_get_view(app->var_list));
@@ -54,6 +55,7 @@ BooksApp* books_app_alloc(void) {
     view_dispatcher_add_view(app->view_dispatcher, BooksViewPopup, popup_get_view(app->popup));
     view_dispatcher_add_view(app->view_dispatcher, BooksViewReader, reader_view_get_view(app->reader));
     view_dispatcher_add_view(app->view_dispatcher, BooksViewLibrary, library_view_get_view(app->library));
+    view_dispatcher_add_view(app->view_dispatcher, BooksViewToc, toc_view_get_view(app->toc));
 
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
 
@@ -78,6 +80,7 @@ void books_app_free(BooksApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, BooksViewPopup);
     view_dispatcher_remove_view(app->view_dispatcher, BooksViewReader);
     view_dispatcher_remove_view(app->view_dispatcher, BooksViewLibrary);
+    view_dispatcher_remove_view(app->view_dispatcher, BooksViewToc);
 
     submenu_free(app->submenu);
     variable_item_list_free(app->var_list);
@@ -86,6 +89,7 @@ void books_app_free(BooksApp* app) {
     popup_free(app->popup);
     reader_view_free(app->reader);
     library_view_free(app->library);
+    toc_view_free(app->toc);
 
     scene_manager_free(app->scene_manager);
     view_dispatcher_free(app->view_dispatcher);

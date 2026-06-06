@@ -33,6 +33,15 @@ uint32_t reader_view_get_page(const ReaderView* r);
 
 void reader_view_jump_to(ReaderView* r, uint32_t offset);
 
+/** Build zero-based page numbers for sorted text offsets using the same
+ *  wrapping rules as the reader view. */
+void reader_view_build_page_map(
+    FBook* book,
+    const BookSettings* settings,
+    const uint32_t* offsets,
+    uint16_t count,
+    uint32_t* pages);
+
 void reader_view_set_event_callback(ReaderView* r, ReaderEventCallback cb, void* ctx);
 
 /** Hand the reader a NotificationApp pointer so it can re-suppress the

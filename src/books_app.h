@@ -18,6 +18,7 @@
 #include "scenes/books_scene.h"
 #include "views/reader_view.h"
 #include "views/library_view.h"
+#include "views/toc_view.h"
 #include "helpers/book_storage.h"
 #include "helpers/book_settings.h"
 #include "helpers/book_progress.h"
@@ -42,6 +43,7 @@ typedef enum {
     BooksViewPopup,
     BooksViewReader,
     BooksViewLibrary,
+    BooksViewToc,
 } BooksView;
 
 typedef struct {
@@ -60,6 +62,7 @@ typedef struct {
     Popup* popup;
     ReaderView* reader;
     LibraryView* library;
+    TocView* toc;
 
     BookSettings settings;
     BookStats stats;

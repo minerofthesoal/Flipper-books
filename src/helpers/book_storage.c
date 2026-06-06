@@ -88,6 +88,7 @@ static bool parse_header_v1(FBook* b) {
         for(uint16_t i = 0; i < FBOOK_MAX_CHAPTERS; ++i) {
             b->chapters[i].offset = read_u32(b->file);
             b->chapters[i].word_count = 0;
+            b->chapters[i].page = 0;
             uint8_t tmp[FBOOK_CHAPTER_TITLE_V1];
             if(storage_file_read(b->file, tmp, FBOOK_CHAPTER_TITLE_V1) != FBOOK_CHAPTER_TITLE_V1) return false;
             memset(b->chapters[i].title, 0, sizeof(b->chapters[i].title));
@@ -101,6 +102,7 @@ static bool parse_header_v1(FBook* b) {
         for(uint16_t i = 0; i < b->chapter_count; ++i) {
             b->chapters[i].offset = read_u32(b->file);
             b->chapters[i].word_count = 0;
+            b->chapters[i].page = 0;
             uint8_t tmp[FBOOK_CHAPTER_TITLE_V1];
             if(storage_file_read(b->file, tmp, FBOOK_CHAPTER_TITLE_V1) != FBOOK_CHAPTER_TITLE_V1) return false;
             memset(b->chapters[i].title, 0, sizeof(b->chapters[i].title));
@@ -175,6 +177,7 @@ static bool parse_header_v2(FBook* b) {
     for(uint16_t i = 0; i < b->chapter_count; ++i) {
         b->chapters[i].offset = read_u32(b->file);
         b->chapters[i].word_count = read_u32(b->file);
+        b->chapters[i].page = 0;
         if(storage_file_read(b->file, b->chapters[i].title, FBOOK_CHAPTER_TITLE_V2) !=
            FBOOK_CHAPTER_TITLE_V2)
             return false;
@@ -205,6 +208,15 @@ static bool parse_header_v2(FBook* b) {
         if(!storage_file_seek(
                b->file, (uint32_t)over * FBOOK_V2_IMAGE_SIZE, false))
             return false;
+    }
+    if(b->flags & FBOOK2_FLAG_CHAPTER_PAGES) {
+        for(uint16_t i = 0; i < b->chapter_count; ++i) {
+            b->chapters[i].page = read_u32(b->file);
+        }
+        if(saved_chapter_count > b->chapter_count) {
+            uint16_t over = saved_chapter_count - b->chapter_count;
+            if(!storage_file_seek(b->file, (uint32_t)over * 4u, false)) return false;
+        }
     }
     b->version = 2;
     return true;

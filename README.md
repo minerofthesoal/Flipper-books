@@ -39,7 +39,7 @@ auto-scroll, and battery-friendly power modes.
 - **Sleep timer** (5/10/15/30/60 min, returns to library on expiry).
 - **Auto-scroll** with adjustable speed.
 - **Bookmarks** (up to 8 per book).
-- **Table of Contents** with chapter word counts.
+- **Table of Contents** with chapter titles and page numbers.
 - **Full-text search** with "search next".
 - **Go to %...** picker (0-100%).
 - Justify / hyphenation toggles.

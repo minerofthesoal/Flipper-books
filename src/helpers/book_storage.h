@@ -14,6 +14,8 @@
 #define FBOOK_MAX_IMAGES 64
 #define FBOOK_CHAPTER_TITLE_V1 32
 #define FBOOK_CHAPTER_TITLE_V2 48
+#define FBOOK2_FLAG_HAS_COVER 0x0001u
+#define FBOOK2_FLAG_CHAPTER_PAGES 0x0004u
 
 /*
  * .fbook (v1) on-disk format (little endian):
@@ -33,7 +35,7 @@
  * .fbook2 on-disk format (little endian):
  *   char     magic[6]        = "FBOOK\x02"
  *   uint16   version         = 2
- *   uint16   flags           // bit 0: has-cover; bit 1: 2bpp images
+ *   uint16   flags           // bit 0: has-cover; bit 1: 2bpp images; bit 2: chapter page table
  *   char     title[64]
  *   char     author[48]
  *   char     language[8]
@@ -51,6 +53,7 @@
  *   uint8    reserved[14]    // pad header to 224 bytes total
  *   ChapterV2 chapters[chapter_count]   // 56 bytes each (u32 offset + u32 word_count + char title[48])
  *   ImageV2  images[image_count]        // 20 bytes each (u32 offset_in_text + u16 w + u16 h + u32 data_offset + u32 data_len + u8 format + u8 reserved[3])
+ *   uint32   chapter_pages[chapter_count] // optional, when flags bit 2 is set; zero-based
  *   byte     text[text_length]
  *   byte     cover_data[cover_data_len]
  *   byte     image_data[...]
@@ -62,6 +65,7 @@
 typedef struct {
     uint32_t offset;
     uint32_t word_count; // v2 only; 0 for v1
+    uint32_t page;       // optional v2 chapter page table; 0 for older files
     char     title[FBOOK_CHAPTER_TITLE_V2];
 } FBookChapter;
 

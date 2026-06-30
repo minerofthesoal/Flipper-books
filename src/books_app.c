@@ -31,6 +31,8 @@ BooksApp* books_app_alloc(void) {
 
     book_settings_load(&app->settings);
     book_stats_load(&app->stats);
+    book_stats_update_streak(&app->stats);
+    book_stats_save(&app->stats);
 
     app->view_dispatcher = view_dispatcher_alloc();
     app->scene_manager = scene_manager_alloc(&books_scene_handlers, app);

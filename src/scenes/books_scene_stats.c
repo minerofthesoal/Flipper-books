@@ -44,9 +44,21 @@ void books_scene_stats_on_enter(void* ctx) {
 
     /* Three lines of body text: top of the dialog body sits at y=14, the
      * "Back" button at the bottom edge starts around y=53. With FontSecondary
-     * (~9 px), three lines (14, 23, 32) clear the button comfortably; the
-     * old four-line layout pushed the last line into the button area, which
-     * is what produced the "[Back] 5h 27m" overlap in the user's photo. */
+     * (~9 px), three lines (14, 23, 32) clear the button comfortably; a
+     * fourth line previously pushed text into the button area (the
+     * "[Back] 5h 27m" overlap from an earlier bug report), so ETA and the
+     * reading streak share the third line instead of getting one each. */
+    char line3[40] = "";
+    if(eta[0] && app->stats.streak_days > 0) {
+        snprintf(line3, sizeof(line3), "%s  Streak %lud",
+                 eta + 2, (unsigned long)app->stats.streak_days);
+    } else if(eta[0]) {
+        snprintf(line3, sizeof(line3), "%s", eta + 2);
+    } else if(app->stats.streak_days > 0) {
+        snprintf(line3, sizeof(line3), "Streak %lu day%s",
+                 (unsigned long)app->stats.streak_days,
+                 app->stats.streak_days == 1 ? "" : "s");
+    }
     snprintf(
         stats_text,
         sizeof(stats_text),
@@ -57,7 +69,7 @@ void books_scene_stats_on_enter(void* ctx) {
         (unsigned long)app->stats.total_pages_read,
         (unsigned long)app->stats.books_finished,
         (unsigned long)app->stats.books_opened,
-        eta[0] ? eta + 2 : "");
+        line3);
 
     DialogEx* d = app->dialog;
     dialog_ex_reset(d);

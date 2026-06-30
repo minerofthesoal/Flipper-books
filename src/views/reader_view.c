@@ -1,11 +1,13 @@
 #include "reader_view.h"
 
 #include <furi.h>
+#include <furi_hal_rtc.h>
 #include <gui/elements.h>
 #include <input/input.h>
 #include <notification/notification_messages.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #define READER_W 128
 #define READER_H 64
@@ -170,9 +172,9 @@ static uint32_t compute_page_end_for(
             if(reserve + 2 < avail_h) reserve += 2;
         }
     }
-    /* Page-number overlay sits in the top-right; reserve the first 8px so
-     * it doesn't overlap the first line of text. */
-    if(settings->show_page_number && reserve < 8) reserve = 8;
+    /* Page-number overlay sits in the top-right, clock in the top-left;
+     * reserve the first 8px so neither overlaps the first line of text. */
+    if((settings->show_page_number || settings->show_clock) && reserve < 8) reserve = 8;
     uint8_t text_h = avail_h > reserve ? avail_h - reserve : lh;
     uint8_t max_lines = (uint8_t)(text_h / lh);
     if(max_lines < 1) max_lines = 1;
@@ -354,7 +356,7 @@ static void draw_text_page(Canvas* c, ReaderModel* m, int16_t x_offset) {
     if(reserve > 0 && reserve + 2 < READER_H) reserve += 2;
     /* Push text below the page-number overlay when it's on. Mirrors the
      * reserve logic in compute_page_end so line counts stay consistent. */
-    if(m->settings->show_page_number && reserve < 8) reserve = 8;
+    if((m->settings->show_page_number || m->settings->show_clock) && reserve < 8) reserve = 8;
     uint16_t text_len = (uint16_t)(m->page_end_offset - m->page_offset);
     draw_text_buffer(c, m, m->cache, text_len, x_offset, reserve);
 }
@@ -384,6 +386,19 @@ static void draw_page_number(Canvas* c, const ReaderModel* m) {
     if(m->settings->night_mode) canvas_set_color(c, ColorWhite);
     else canvas_set_color(c, ColorBlack);
     canvas_draw_str_aligned(c, READER_W - 1, 1, AlignRight, AlignTop, buf);
+}
+
+/** Draws "HH:MM" in the top-left using the device RTC; used when show_clock
+ *  is enabled. Mirrors draw_page_number's placement on the opposite side. */
+static void draw_clock(Canvas* c, const ReaderModel* m) {
+    FuriHalRtcDateTime dt;
+    furi_hal_rtc_get_datetime(&dt);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%02u:%02u", dt.hour, dt.minute);
+    canvas_set_font(c, FontSecondary);
+    if(m->settings->night_mode) canvas_set_color(c, ColorWhite);
+    else canvas_set_color(c, ColorBlack);
+    canvas_draw_str_aligned(c, 1, 1, AlignLeft, AlignTop, buf);
 }
 
 static void draw_image_on_page(Canvas* c, ReaderModel* m) {
@@ -538,6 +553,9 @@ static void render_callback(Canvas* c, void* ctx) {
     if(m->settings->show_page_number) {
         draw_page_number(c, m);
     }
+    if(m->settings->show_clock) {
+        draw_clock(c, m);
+    }
 
     if(m->show_bookmark_flash && furi_get_tick() < m->bookmark_flash_until) {
         canvas_set_color(c, m->settings->night_mode ? ColorWhite : ColorBlack);
@@ -643,6 +661,8 @@ static bool input_callback(InputEvent* evt, void* ctx) {
         }
     }
 
+    bool did_turn = false;
+
     if(evt->type == InputTypeShort) {
         with_view_model(
             r->view, ReaderModel * m, {
@@ -656,6 +676,7 @@ static bool input_callback(InputEvent* evt, void* ctx) {
                         compute_page_end(m);
                         m->anim_dir = 1;
                         m->anim_progress = 0;
+                        did_turn = true;
                     }
                     consumed = true;
                     break;
@@ -668,6 +689,7 @@ static bool input_callback(InputEvent* evt, void* ctx) {
                         compute_page_end(m);
                         m->anim_dir = -1;
                         m->anim_progress = 0;
+                        did_turn = true;
                     }
                     consumed = true;
                     break;
@@ -701,6 +723,22 @@ static bool input_callback(InputEvent* evt, void* ctx) {
         } else if(evt->key == InputKeyDown) {
             emit_event(r, ReaderEventToc);
             consumed = true;
+        }
+    }
+
+    /* Vibrate on page turn: fired once per real page change (not on bumps
+     * against the start/end of the book), outside the model lock like the
+     * PowerSaver re-suppression below. Foreground-only by design - never
+     * called from the background timers, so it can't fire while the reader
+     * isn't the active scene. */
+    if(did_turn && r->notifications) {
+        bool vibrate = false;
+        with_view_model(
+            r->view, ReaderModel * m,
+            { vibrate = m->settings && m->settings->vibrate_page_turn; },
+            false);
+        if(vibrate) {
+            notification_message(r->notifications, &sequence_single_vibro);
         }
     }
 
@@ -763,6 +801,27 @@ void reader_view_set_book(ReaderView* r, FBook* book) {
             if(book && m->settings) compute_page_end(m);
         },
         true);
+}
+
+void reader_view_clear_book(ReaderView* r) {
+    with_view_model(
+        r->view, ReaderModel * m, {
+            m->book = NULL;
+            m->anim_dir = 0;
+            m->anim_progress = 0;
+        },
+        false);
+}
+
+void reader_view_pause(ReaderView* r) {
+    furi_timer_stop(r->anim_timer);
+    furi_timer_stop(r->auto_timer);
+}
+
+void reader_view_resume(ReaderView* r) {
+    furi_timer_start(r->anim_timer, furi_ms_to_ticks(30));
+    /* auto_timer is (re)started by reader_view_set_settings(), which the
+     * reader scene already calls on every re-entry. */
 }
 
 void reader_view_set_settings(ReaderView* r, const BookSettings* settings) {

@@ -2,6 +2,7 @@
 #include "../books_app.h"
 #include <storage/storage.h>
 #include <furi.h>
+#include <furi_hal_rtc.h>
 #include <string.h>
 
 #define SETTINGS_MAGIC 0x424F4B32u /* 'BOK2' - bumped for new fields */
@@ -114,6 +115,38 @@ bool book_stats_save(const BookStats* s) {
     bool ok = write_all(storage, BOOKS_STATS_FILE, &b, sizeof(b));
     furi_record_close(RECORD_STORAGE);
     return ok;
+}
+
+/* Days since 1970-01-01 for a proleptic Gregorian (y, m, d), per Howard
+ * Hinnant's well-known civil_from_days/days_from_civil algorithm. Only used
+ * to compare consecutive calendar days, so we don't need anything fancier. */
+static uint32_t days_from_civil(int32_t y, uint32_t m, uint32_t d) {
+    y -= (m <= 2) ? 1 : 0;
+    int32_t era = (y >= 0 ? y : y - 399) / 400;
+    uint32_t yoe = (uint32_t)(y - era * 400);              // [0, 399]
+    uint32_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; // [0, 365]
+    uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;   // [0, 146096]
+    return (uint32_t)(era * 146097 + (int32_t)doe + 719468);
+}
+
+void book_stats_update_streak(BookStats* s) {
+    FuriHalRtcDateTime dt;
+    furi_hal_rtc_get_datetime(&dt);
+    if(dt.year == 0) return; // RTC not set; leave streak as-is rather than guess
+
+    uint32_t today = days_from_civil(dt.year, dt.month, dt.day);
+
+    if(s->last_active_day == 0) {
+        s->streak_days = 1;
+    } else if(today == s->last_active_day) {
+        // already counted today
+    } else if(today == s->last_active_day + 1) {
+        s->streak_days++;
+    } else {
+        // skipped a day (or the clock moved backward) - streak resets
+        s->streak_days = 1;
+    }
+    s->last_active_day = today;
 }
 
 const char* power_mode_name(PowerMode m) {

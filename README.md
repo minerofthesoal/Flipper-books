@@ -31,6 +31,7 @@ auto-scroll, and battery-friendly power modes.
 - **Font family** (Auto / Serif / Sans).
 - **Margin** (None / Normal / Wide).
 - **Page number / percentage overlay** (top-right).
+- **Clock overlay** (top-left, 24h, from the device RTC).
 - **Working slide & fade animations** that show both old and new page during
   the transition.
 - **Night mode** (true black background with white text).
@@ -49,6 +50,7 @@ auto-scroll, and battery-friendly power modes.
 - **Reading speed** (words/minute) computed from accumulated reading time.
 - **Estimated time remaining** for the current book based on WPM and the
   unread word count.
+- **Reading streak**: consecutive calendar days the app's been opened.
 - Total time read, pages read, books opened, books finished.
 
 Per-book progress is saved automatically on every page turn and on exit.
@@ -110,6 +112,21 @@ ufbt
 ```
 
 The built `.fap` lands in `dist/`.
+
+## Changelog notes
+
+- **Fixed**: a use-after-free in the reader. Leaving the reader for any
+  sub-screen (Menu, TOC, Bookmarks, Search, Go to %) freed the open book
+  while the reader view's background timers (page-turn animation, and
+  especially auto-scroll) kept running and dereferencing it. This silently
+  corrupted the heap, which showed up as random freezes (often right after
+  reopening a book) and as intermittent "out of memory"-looking failures on
+  the *next* book opened, regardless of that book's size. The reader view
+  now drops its book pointer and pauses its timers whenever it's not the
+  active scene.
+- **Finished**: "Vibrate on page turn" and "Show Clock" were present as
+  Settings toggles but didn't do anything - both are now wired up.
+- **Added**: a reading-streak counter in Reading Stats.
 
 ## CI
 

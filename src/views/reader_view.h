@@ -27,6 +27,23 @@ void reader_view_set_book(ReaderView* r, FBook* book);
 void reader_view_set_settings(ReaderView* r, const BookSettings* settings);
 void reader_view_set_progress(ReaderView* r, const BookProgress* progress);
 
+/** Drop the view's reference to its current FBook* without touching the
+ *  underlying file/heap. MUST be called before the scene that owns the
+ *  FBook frees it (e.g. when leaving the reader for Menu/TOC/Bookmarks/
+ *  Search) - otherwise the view model is left holding a dangling pointer
+ *  that the background timers (see reader_view_pause) can dereference. */
+void reader_view_clear_book(ReaderView* r);
+
+/** Stop the view's background timers (page-animation tick + auto-scroll).
+ *  Call when navigating away from the reader so nothing keeps touching the
+ *  model (and the FBook it points to) while the view isn't on screen. */
+void reader_view_pause(ReaderView* r);
+
+/** Resume the animation timer after reader_view_pause(). Auto-scroll's timer
+ *  is restarted separately by reader_view_set_settings(), which the reader
+ *  scene already calls on every re-entry. */
+void reader_view_resume(ReaderView* r);
+
 /** Current reading offset (for saving progress on exit). */
 uint32_t reader_view_get_offset(const ReaderView* r);
 uint32_t reader_view_get_page(const ReaderView* r);

@@ -69,6 +69,7 @@ void books_scene_reader_on_enter(void* ctx) {
     book_progress_load(app->current_book_path, &app->progress);
     app->progress.total_bytes = g_book->text_length;
 
+    reader_view_resume(app->reader);
     reader_view_set_settings(app->reader, &app->settings);
     reader_view_set_book(app->reader, g_book);
     reader_view_set_progress(app->reader, &app->progress);
@@ -151,6 +152,15 @@ bool books_scene_reader_on_event(void* ctx, SceneManagerEvent event) {
 
 void books_scene_reader_on_exit(void* ctx) {
     BooksApp* app = ctx;
+    /* Stop the view's background timers and drop its FBook* BEFORE freeing
+     * g_book below. Leaving the view's model pointing at freed memory while
+     * its timers keep running in the background (page-turn animation tick,
+     * and especially auto-scroll) is a use-after-free: it can corrupt the
+     * heap silently, which is what produced the "freeze + force-restart"
+     * hangs and the intermittent "out of memory" failures on the next book
+     * opened, since the next allocation can land on the trashed heap. */
+    reader_view_pause(app->reader);
+    reader_view_clear_book(app->reader);
     if(g_book) {
         save_progress(app);
         fbook_free(g_book);

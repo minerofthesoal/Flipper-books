@@ -80,6 +80,10 @@ typedef struct {
     uint32_t books_opened;
     uint32_t books_finished;
     uint32_t total_words_read;       // added in v2
+
+    // Added in v3: day-based reading streak.
+    uint32_t streak_days;            // consecutive calendar days the app was opened
+    uint32_t last_active_day;        // days-since-epoch of the last streak update; 0 = never
 } BookStats;
 
 void book_settings_set_defaults(BookSettings* s);
@@ -89,6 +93,11 @@ bool book_settings_save(const BookSettings* s);
 void book_stats_set_defaults(BookStats* s);
 bool book_stats_load(BookStats* s);
 bool book_stats_save(const BookStats* s);
+
+/** Call once per app launch. Bumps streak_days if today is the day right
+ *  after last_active_day, resets to 1 if a day (or more) was skipped, and
+ *  leaves it alone if the app was already opened today. Uses the device RTC. */
+void book_stats_update_streak(BookStats* s);
 
 const char* power_mode_name(PowerMode m);
 const char* page_anim_name(PageAnimation a);

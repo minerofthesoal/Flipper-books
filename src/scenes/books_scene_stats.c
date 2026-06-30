@@ -48,12 +48,16 @@ void books_scene_stats_on_enter(void* ctx) {
      * fourth line previously pushed text into the button area (the
      * "[Back] 5h 27m" overlap from an earlier bug report), so ETA and the
      * reading streak share the third line instead of getting one each. */
-    char line3[40] = "";
+    /* Bound the %s field explicitly so the compiler can prove this fits
+     * rather than guessing a worst-case length and erroring under
+     * -Werror=format-truncation; the buffer also has headroom over the
+     * worst case (21 + 9 + 10-digit uint32_t + 1 = 41 bytes). */
+    char line3[48] = "";
     if(eta[0] && app->stats.streak_days > 0) {
-        snprintf(line3, sizeof(line3), "%s  Streak %lud",
+        snprintf(line3, sizeof(line3), "%.21s  Streak %lud",
                  eta + 2, (unsigned long)app->stats.streak_days);
     } else if(eta[0]) {
-        snprintf(line3, sizeof(line3), "%s", eta + 2);
+        snprintf(line3, sizeof(line3), "%.21s", eta + 2);
     } else if(app->stats.streak_days > 0) {
         snprintf(line3, sizeof(line3), "Streak %lu day%s",
                  (unsigned long)app->stats.streak_days,

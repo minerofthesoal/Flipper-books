@@ -2,6 +2,7 @@
 
 #include <furi.h>
 #include <furi_hal_rtc.h>
+#include <datetime/datetime.h>
 #include <gui/elements.h>
 #include <input/input.h>
 #include <notification/notification_messages.h>
@@ -391,7 +392,7 @@ static void draw_page_number(Canvas* c, const ReaderModel* m) {
 /** Draws "HH:MM" in the top-left using the device RTC; used when show_clock
  *  is enabled. Mirrors draw_page_number's placement on the opposite side. */
 static void draw_clock(Canvas* c, const ReaderModel* m) {
-    FuriHalRtcDateTime dt;
+    DateTime dt;
     furi_hal_rtc_get_datetime(&dt);
     char buf[8];
     snprintf(buf, sizeof(buf), "%02u:%02u", dt.hour, dt.minute);

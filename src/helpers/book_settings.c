@@ -3,6 +3,7 @@
 #include <storage/storage.h>
 #include <furi.h>
 #include <furi_hal_rtc.h>
+#include <datetime/datetime.h>
 #include <string.h>
 
 #define SETTINGS_MAGIC 0x424F4B32u /* 'BOK2' - bumped for new fields */
@@ -126,11 +127,11 @@ static uint32_t days_from_civil(int32_t y, uint32_t m, uint32_t d) {
     uint32_t yoe = (uint32_t)(y - era * 400);              // [0, 399]
     uint32_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; // [0, 365]
     uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;   // [0, 146096]
-    return (uint32_t)(era * 146097 + (int32_t)doe + 719468);
+    return (uint32_t)(era * 146097 + (int32_t)doe - 719468);
 }
 
 void book_stats_update_streak(BookStats* s) {
-    FuriHalRtcDateTime dt;
+    DateTime dt;
     furi_hal_rtc_get_datetime(&dt);
     if(dt.year == 0) return; // RTC not set; leave streak as-is rather than guess
 
